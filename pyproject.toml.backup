@@ -46,11 +46,10 @@ dependencies = [
     "nltk",
     "graphdatascience",
     "azure-ai-projects",
+    "azure-cli",
     "azure-ai-inference",
     "azure-identity",
-    "json_repair",
-    "faiss-cpu>=1.12.0",
-    "python-dotenv>=1.2.1",
+    "json_repair"
 ]
 [project.optional-dependencies]
 nvembed = [

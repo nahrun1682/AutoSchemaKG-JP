@@ -19,3 +19,7 @@ test.py
 todo.md
 import/hotpotqa_corpus_kg_input
 vllm
+.env
+test_llm.py
+import/
+example_data/
