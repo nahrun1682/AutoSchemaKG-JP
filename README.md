@@ -118,6 +118,14 @@ kg_extractor.create_concept_csv()
 kg_extractor.convert_to_graphml()
 ```
 
+### Japanese Knowledge Graph Demo
+
+The repository ships with `example_data/JP_sample.json`, which contains日本語テキストと`\"lang\": \"ja\"`メタデータを付与したテストデータです。日本語プロンプトを利用したパイプラインを試すには、以下の手順に従ってください。
+
+1. `.env` に `OPENAI_API_KEY=<YOUR KEY>` を設定する（`kg_demo.py` は `dotenv` で読み込みます）。
+2. `kg_demo.py` の `ProcessingConfig` は日本語ファイル (`filename_pattern=\"JP_sample\"`) を指しています。必要に応じて `data_directory` や `batch_size` を調整してください。
+3. `uv run python kg_demo.py` を実行し、`import/JP_sample` 配下に生成される `kg_extraction` → `triples_csv` → `concepts` → `kg_graphml` を確認します。
+
 ## Large Knowledge Graph Hosting and Retrieval Augmented Generation
 
 This repository provides support for hosting and implementing Retrieval Augmented Generation (RAG) over our constructed knowledge graphs: `ATLAS-wiki`, `ATLAS-pes2o`, and `ATLAS-cc`. For detailed instructions on hosting and running these knowledge graphs, please refer to the `atlas_billion_kg_usage.ipynb` notebook. 
@@ -243,4 +251,3 @@ Jiaxin Bai: jbai@connect.ust.hk
 Dennis Hong Ting TSANG : httsangaj@connect.ust.hk
 
 Haoyu Huang: haoyuhuang@link.cuhk.edu.hk
-

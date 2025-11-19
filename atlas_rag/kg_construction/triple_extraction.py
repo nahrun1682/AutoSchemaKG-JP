@@ -71,10 +71,14 @@ class DatasetProcessor:
         self.chunker = TextChunker()
         self.benchmark = config.benchmark
         self.deduplicate_text = config.deduplicate_text
+        self._warned_missing_lang = False
 
     def filter_language_content(self, sample: Dict[str, Any]) -> bool:
         """Check if content is in English."""
         metadata = sample.get("metadata", {})
+        if "lang" not in metadata and not self._warned_missing_lang:
+            print(f"metadata.lang missing for sample {sample.get('id', 'unknown')}; defaulting to 'en'.")
+            self._warned_missing_lang = True
         language = metadata.get("lang", "en")  # Default to English if not specified
         supported_languages = list(PROMPT_INSTRUCTIONS.keys())
         return language in supported_languages

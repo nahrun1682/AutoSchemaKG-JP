@@ -73,7 +73,7 @@ model_name = "gpt-4o-mini"
 #     device_map="auto",
 # )
 
-keyword = 'niconico_2024_month'
+keyword = 'OpenAI_API_REF'
 filename_pattern = keyword
 output_directory = f'import/{keyword}'
 
