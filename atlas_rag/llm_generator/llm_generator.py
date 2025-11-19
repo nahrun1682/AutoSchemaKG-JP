@@ -13,6 +13,7 @@ from transformers.pipelines import Pipeline
 import jsonschema
 import time
 from transformers import AutoTokenizer
+import re
 
 
 
@@ -68,6 +69,37 @@ class LLMGenerator():
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self.retry_count = 0
 
+    def _coerce_to_text(self, value):
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "".join(self._coerce_to_text(item) for item in value)
+        if isinstance(value, dict):
+            if "text" in value:
+                return value.get("text") or ""
+            if "content" in value:
+                return self._coerce_to_text(value.get("content"))
+        if hasattr(value, "text"):
+            return value.text or ""
+        return str(value)
+
+    def _prepare_response_content(self, message, return_thinking):
+        content = self._coerce_to_text(message.content)
+        reasoning = self._coerce_to_text(getattr(message, "reasoning_content", None))
+        if not content and reasoning:
+            content = reasoning
+            reasoning = "" if not return_thinking else reasoning
+        if return_thinking and reasoning and reasoning not in content:
+            content = f"<think>{reasoning}</think>{content}"
+        cleaned = content or ""
+        if not return_thinking:
+            if '</think>' in cleaned:
+                cleaned = cleaned.split('</think>')[-1]
+            cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+        return cleaned.strip()
+
     @retry_decorator
     def _api_inference(self, message, max_new_tokens=8192,
                            temperature = 0.7,
@@ -78,40 +110,48 @@ class LLMGenerator():
                            reasoning_effort=None,
                            **kwargs):
         start_time = time.time()
-        response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=message,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-                frequency_penalty= NOT_GIVEN if frequency_penalty is None else frequency_penalty,
-                response_format = response_format if response_format is not None else {"type": "text"},
-                timeout = 120,
-                reasoning_effort= NOT_GIVEN if reasoning_effort is None else reasoning_effort,
-                extra_body = {
-                    "chat_template_kwargs": {"enable_thinking": False if reasoning_effort is None else True}
-                }
-                
-            )
-        time_cost = time.time() - start_time
-        content = response.choices[0].message.content
-        if content is None and hasattr(response.choices[0].message, 'reasoning_content'):
-            content = response.choices[0].message.reasoning_content
-        validate_function = kwargs.get('validate_function', None)
-        content = validate_function(content, **kwargs) if validate_function else content
+        extra_body = kwargs.pop("extra_body", None)
+        token_key = "max_completion_tokens" if self.model_name.startswith("gpt-5") else "max_tokens"
+        supports_temp_override = not self.model_name.startswith("gpt-5")
+        temperature_value = temperature if supports_temp_override else NOT_GIVEN
+        request_kwargs = {
+            "model": self.model_name,
+            "messages": message,
+            token_key: max_new_tokens,
+            "temperature": temperature_value,
+            "frequency_penalty": NOT_GIVEN if frequency_penalty is None else frequency_penalty,
+            "response_format": response_format if response_format is not None else {"type": "text"},
+            "timeout": 120,
+            "reasoning_effort": NOT_GIVEN if reasoning_effort is None else reasoning_effort,
+        }
+        if extra_body is not None:
+            request_kwargs["extra_body"] = extra_body
+        try:
+            response = self.client.chat.completions.create(**request_kwargs)
+            time_cost = time.time() - start_time
+            content = self._prepare_response_content(response.choices[0].message, return_thinking)
+            validate_function = kwargs.get('validate_function', None)
+            stop_on_validation_error = kwargs.get('stop_on_validation_error', False)
+            if validate_function:
+                original_content = content
+                try:
+                    content = validate_function(content, **kwargs)
+                except Exception as e:
+                    if stop_on_validation_error:
+                        raise
+                    print(f"[LLMGenerator] Validation failed for {self.model_name}: {e}. Returning raw content.")
+                    content = original_content
+            
 
-        if '</think>' in content and not return_thinking:
-            content = content.split('</think>')[-1].strip()
-        else:
-            if hasattr(response.choices[0].message, 'reasoning_content') and response.choices[0].message.reasoning_content is not None and return_thinking:
-                content = '<think>' + response.choices[0].message.reasoning_content + '</think>' + content
-        
-
-        if return_text_only:
-            return content
-        else:
-            completion_usage_dict = response.usage.model_dump()
-            completion_usage_dict['time'] = time_cost
-            return content, completion_usage_dict
+            if return_text_only:
+                return content
+            else:
+                completion_usage_dict = response.usage.model_dump()
+                completion_usage_dict['time'] = time_cost
+                return content, completion_usage_dict
+        except Exception as e:
+            print(f"[LLMGenerator] _api_inference error for {self.model_name}: {e}")
+            raise
 
     def generate_response(self, batch_messages, do_sample=True, max_new_tokens=8192,
                                  temperature=0.7, frequency_penalty=None, response_format={"type": "text"},
@@ -333,7 +373,7 @@ class LLMGenerator():
             "fix_function": fix_lkg_keywords
         }
         # Generate raw response from LLM
-        raw_response = self.generate_response(messages, max_new_tokens=4096, temperature=0.7, frequency_penalty=1.1, response_format={"type": "json_object"}, validate_output=validate_output, **validation_args)
+        raw_response = self.generate_response(messages, max_new_tokens=4096, temperature=0.7, frequency_penalty=1.1, response_format={"type": "json_object"}, validate_function=validate_output, **validation_args)
         
         try:
             # Validate and clean the response
@@ -364,7 +404,7 @@ class LLMGenerator():
             "schema": lkg_keyword_json_schema,
             "fix_function": fix_lkg_keywords
         }
-        raw_response = self.generate_response(messages, max_new_tokens=4096, temperature=0.7, frequency_penalty=1.1, response_format={"type": "json_object"}, validate_output=validate_output, **validation_args)
+        raw_response = self.generate_response(messages, max_new_tokens=4096, temperature=0.7, frequency_penalty=1.1, response_format={"type": "json_object"}, validate_function=validate_output, **validation_args)
         
         try:
             # Validate and clean the response

@@ -9,60 +9,14 @@ from dotenv import load_dotenv
 # .envファイルから環境変数を読み込み
 load_dotenv()
 
-# カスタムLLMGeneratorを作成（extra_bodyを削除）
+# カスタムLLMGeneratorを作成（gpt-5系でthinkingを強制無効化）
 from atlas_rag.llm_generator import LLMGenerator
 
 class FixedLLMGenerator(LLMGenerator):
-    def _api_inference(self, message, max_new_tokens=8192,
-                       temperature=0.7,
-                       frequency_penalty=None,
-                       response_format={"type": "text"},
-                       return_text_only=True,
-                       return_thinking=False,
-                       reasoning_effort=None,
-                       **kwargs):
-        import time
-        from openai import NOT_GIVEN
+    def _api_inference(self, *args, **kwargs):
+        return super()._api_inference(*args, **kwargs)
         
-        start_time = time.time()
-        
-        # extra_bodyを削除してAPI呼び出し
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=message,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            frequency_penalty=NOT_GIVEN if frequency_penalty is None else frequency_penalty,
-            response_format=response_format if response_format is not None else {"type": "text"},
-            timeout=120,
-            reasoning_effort=NOT_GIVEN if reasoning_effort is None else reasoning_effort,
-            # extra_body を削除！
-        )
-        
-        time_cost = time.time() - start_time
-        content = response.choices[0].message.content
-        
-        if content is None and hasattr(response.choices[0].message, 'reasoning_content'):
-            content = response.choices[0].message.reasoning_content
-            
-        validate_function = kwargs.get('validate_function', None)
-        content = validate_function(content, **kwargs) if validate_function else content
-        
-        if '</think>' in content and not return_thinking:
-            content = content.split('</think>')[-1].strip()
-        else:
-            if hasattr(response.choices[0].message, 'reasoning_content') and \
-               response.choices[0].message.reasoning_content is not None and return_thinking:
-                content = '<think>' + response.choices[0].message.reasoning_content + '</think>' + content
-        
-        if return_text_only:
-            return content
-        else:
-            completion_usage_dict = response.usage.model_dump()
-            completion_usage_dict['time'] = time_cost
-            return content, completion_usage_dict
-        
-# カスタムLLMGeneratorを作成（extra_bodyを削除） 
+# カスタムLLMGeneratorを作成（gpt-5系でthinkingを強制無効化）
 # .envからAPIキーを自動取得
 
 client = OpenAI()  # 環境変数 OPENAI_API_KEY から自動取得
@@ -73,7 +27,7 @@ model_name = "gpt-4o-mini"
 #     device_map="auto",
 # )
 
-keyword = 'OpenAI_API_REF'
+keyword = 'Dulce'
 filename_pattern = keyword
 output_directory = f'import/{keyword}'
 
