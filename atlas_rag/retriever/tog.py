@@ -41,6 +41,7 @@ class TogRetriever(BaseEdgeRetriever):
     def retrieve_topk_nodes(self, query, topN=5, **kwargs):
         # extract entities from the query
         entities = self.ner(query)
+        print(f"[TOG] NER raw output: {entities}")
         entities = entities.split(", ")
 
         if len(entities) == 0:
@@ -82,13 +83,16 @@ class TogRetriever(BaseEdgeRetriever):
         Dmax = self.inference_config.Dmax
         # in the first step, we retrieve the top k nodes
         initial_nodes = self.retrieve_topk_nodes(query, topN=topN)
+        print(f"[TOG] initial candidate nodes: {initial_nodes}")
         E = initial_nodes
         P = [ [e] for e in E]
         D = 0
 
         while D <= Dmax:
             P = self.search(query, P)
+            print(f"[TOG] after search depth {D}: {len(P)} paths")
             P = self.prune(query, P, topN)
+            print(f"[TOG] after prune depth {D}: {len(P)} paths")
             
             if self.reasoning(query, P):
                 generated_text = self.generate(query, P)
@@ -108,6 +112,7 @@ class TogRetriever(BaseEdgeRetriever):
             tail_entity = path[-1]
             sucessors = list(self.KG.successors(tail_entity))
             predecessors = list(self.KG.predecessors(tail_entity))
+            print(f"[TOG] expanding {tail_entity}: {len(sucessors)} successors, {len(predecessors)} predecessors")
 
             # print(f"tail_entity: {tail_entity}")
             # print(f"sucessors: {sucessors}")
@@ -136,9 +141,9 @@ class TogRetriever(BaseEdgeRetriever):
         return new_paths
     
     def prune(self, query, P, topN=3):
-        ratings = []
+        rated_paths = []
 
-        for path in P:
+        for path_idx, path in enumerate(P):
             path_string = ""
             for index, node_or_relation in enumerate(path):
                 if index % 2 == 0:
@@ -154,12 +159,20 @@ class TogRetriever(BaseEdgeRetriever):
             {"role": "user", "content": f"{prompt}"}]
 
             response = self.llm_generator.generate_response(messages)
-            # print(response)
-            rating = int(response)
-            ratings.append(rating)
+            print(f"[TOG] prune: rating response for path #{path_idx} = {response!r}")
+            try:
+                rating = int(response.strip())
+            except (ValueError, AttributeError):
+                print(f"[TOG] prune: failed to parse rating for path #{path_idx} (response={response!r}), skipping.")
+                continue
+            rated_paths.append((rating, path))
+        
+        if not rated_paths:
+            print("[TOG] prune: no valid ratings returned, falling back to original ranking.")
+            return P[:topN]
             
         # sort the paths based on the ratings
-        sorted_paths = [path for _, path in sorted(zip(ratings, P), reverse=True)]
+        sorted_paths = [path for _, path in sorted(rated_paths, key=lambda x: x[0], reverse=True)]
         
         return sorted_paths[:topN]
 
