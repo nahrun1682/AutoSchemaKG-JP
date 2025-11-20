@@ -25,6 +25,10 @@ class TogRetriever(BaseEdgeRetriever):
         self.topk_neighbors = getattr(self.inference_config, "topk_neighbors", 20)
         if self.topk_neighbors is None or self.topk_neighbors <= 0:
             self.topk_neighbors = None
+        ignored_relations = getattr(self.inference_config, "ignored_relations", ("mention in",))
+        self.ignored_relations = set(ignored_relations) if ignored_relations else set()
+        ignored_node_types = getattr(self.inference_config, "ignored_node_types", ("passage",))
+        self.ignored_node_types = set(ignored_node_types) if ignored_node_types else set()
 
     def ner(self, text):
         messages = [
@@ -128,8 +132,16 @@ class TogRetriever(BaseEdgeRetriever):
             # print(f"attributes of the tail_entity: {self.KG.nodes[tail_entity]}")
            
             # remove the entity that is already in the path
-            sucessors = [neighbour for neighbour in sucessors if neighbour not in path]
-            predecessors = [neighbour for neighbour in predecessors if neighbour not in path]
+            sucessors = [
+                neighbour
+                for neighbour in sucessors
+                if neighbour not in path and self._is_valid_edge(tail_entity, neighbour)
+            ]
+            predecessors = [
+                neighbour
+                for neighbour in predecessors
+                if neighbour not in path and self._is_valid_edge(neighbour, tail_entity)
+            ]
 
             sucessors = self._select_topk_neighbors(sucessors, query_embedding)
             predecessors = self._select_topk_neighbors(predecessors, query_embedding)
@@ -148,6 +160,15 @@ class TogRetriever(BaseEdgeRetriever):
                 new_paths.append(new_path)
         
         return new_paths
+
+    def _is_valid_edge(self, head, tail):
+        relation = self.KG.edges[(head, tail)].get("relation", "")
+        if relation in self.ignored_relations:
+            return False
+        tail_type = self.KG.nodes[tail].get("type")
+        if tail_type in self.ignored_node_types:
+            return False
+        return True
 
     def _select_topk_neighbors(self, neighbors, query_embedding):
         if not neighbors:
@@ -172,8 +193,10 @@ class TogRetriever(BaseEdgeRetriever):
     
     def prune(self, query, P, topN=3):
         rated_paths = []
+        batch_messages = []
+        path_strings = []
 
-        for path_idx, path in enumerate(P):
+        for path in P:
             path_string = ""
             for index, node_or_relation in enumerate(path):
                 if index % 2 == 0:
@@ -182,18 +205,34 @@ class TogRetriever(BaseEdgeRetriever):
                     id_path = node_or_relation
                 path_string += f"{id_path} --->"
             path_string = path_string[:-5]
+            path_strings.append(path_string)
 
-            prompt = f"Please rating the following path based on the relevance to the question. The ratings should be in the range of 1 to 5. 1 for least relevant and 5 for most relevant. Only provide the rating, do not provide any other information. The output should be a single integer number. If you think the path is not relevant, please provide 0. If you think the path is relevant, please provide a rating between 1 and 5. \n Query: {query} \n path: {path_string}" 
+            prompt = (
+                "Please rating the following path based on the relevance to the question. "
+                "The ratings should be in the range of 1 to 5. 1 for least relevant and 5 for most relevant. "
+                "Only provide the rating, do not provide any other information. "
+                "The output should be a single integer number. If you think the path is not relevant, please provide 0. "
+                "If you think the path is relevant, please provide a rating between 1 and 5. \n "
+                f"Query: {query} \n path: {path_string}"
+            )
 
-            messages = [{"role": "system", "content": "Answer the question following the prompt."},
-            {"role": "user", "content": f"{prompt}"}]
+            batch_messages.append(
+                [
+                    {"role": "system", "content": "Answer the question following the prompt."},
+                    {"role": "user", "content": prompt},
+                ]
+            )
 
-            response = self.llm_generator.generate_response(messages)
-            print(f"[TOG] prune: rating response for path #{path_idx} = {response!r}")
+        if not batch_messages:
+            return P[:topN]
+
+        responses = self.llm_generator.generate_response(batch_messages)
+        for idx, (response, path, path_string) in enumerate(zip(responses, P, path_strings)):
+            print(f"[TOG] prune: rating response for path #{idx} = {response!r}")
             try:
                 rating = int(response.strip())
             except (ValueError, AttributeError):
-                print(f"[TOG] prune: failed to parse rating for path #{path_idx} (response={response!r}), skipping.")
+                print(f"[TOG] prune: failed to parse rating for path #{idx} (response={response!r}), skipping.")
                 continue
             rated_paths.append((rating, path))
         
