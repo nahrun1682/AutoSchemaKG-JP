@@ -197,7 +197,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run TOG retrieval on a question.")
     parser.add_argument(
         "--question",
-        default="2023年で一番ニコニコを賑わせたキャラクターtop5人を教えて",
+        default="2023年で一番人気のあった動画は何ですか？",
         help="問い合わせる質問（日本語推奨）",
     )
     parser.add_argument(
@@ -263,11 +263,11 @@ def main() -> None:
         llm_generator=llm,
         sentence_encoder=embedder,
         data={"KG": graph, "node_embeddings": node_embeddings, "edge_embeddings": edge_embeddings},
-        inference_config=InferenceConfig(Dmax=3, topk=2),
+        inference_config=InferenceConfig(Dmax=10, topk=3),
     )
 
     print(f"❓ 質問: {args.question}")
-    triples, _ = retriever.retrieve(args.question, topN=2)
+    triples, _ = retriever.retrieve(args.question, topN=3)
     print("📚 取得したトリプル:")
     for triple in triples:
         print(f"  - {triple}")

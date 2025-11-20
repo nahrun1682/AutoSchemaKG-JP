@@ -10,6 +10,7 @@ class TogRetriever(BaseEdgeRetriever):
         self.KG = data["KG"]
 
         self.node_list = list(self.KG.nodes)
+        self.node_index = {node: idx for idx, node in enumerate(self.node_list)}
         self.edge_list = list(self.KG.edges)
         self.edge_list_with_relation = [(edge[0], self.KG.edges[edge]["relation"], edge[1])  for edge in self.edge_list]
         self.edge_list_string = [f"{edge[0]}  {self.KG.edges[edge]['relation']}  {edge[1]}" for edge in self.edge_list]
@@ -21,6 +22,9 @@ class TogRetriever(BaseEdgeRetriever):
         self.edge_embeddings = data["edge_embeddings"]
 
         self.inference_config = inference_config if inference_config is not None else InferenceConfig()
+        self.topk_neighbors = getattr(self.inference_config, "topk_neighbors", 20)
+        if self.topk_neighbors is None or self.topk_neighbors <= 0:
+            self.topk_neighbors = None
 
     def ner(self, text):
         messages = [
@@ -88,8 +92,10 @@ class TogRetriever(BaseEdgeRetriever):
         P = [ [e] for e in E]
         D = 0
 
+        query_embedding = self.sentence_encoder.encode([query])
+
         while D <= Dmax:
-            P = self.search(query, P)
+            P = self.search(query, P, query_embedding)
             print(f"[TOG] after search depth {D}: {len(P)} paths")
             P = self.prune(query, P, topN)
             print(f"[TOG] after prune depth {D}: {len(P)} paths")
@@ -106,7 +112,7 @@ class TogRetriever(BaseEdgeRetriever):
         # print(generated_text)
         return generated_text
 
-    def search(self, query, P):
+    def search(self, query, P, query_embedding):
         new_paths = []
         for path in P:
             tail_entity = path[-1]
@@ -125,6 +131,9 @@ class TogRetriever(BaseEdgeRetriever):
             sucessors = [neighbour for neighbour in sucessors if neighbour not in path]
             predecessors = [neighbour for neighbour in predecessors if neighbour not in path]
 
+            sucessors = self._select_topk_neighbors(sucessors, query_embedding)
+            predecessors = self._select_topk_neighbors(predecessors, query_embedding)
+
             if len(sucessors) == 0 and len(predecessors) == 0:
                 new_paths.append(path)
                 continue
@@ -139,6 +148,27 @@ class TogRetriever(BaseEdgeRetriever):
                 new_paths.append(new_path)
         
         return new_paths
+
+    def _select_topk_neighbors(self, neighbors, query_embedding):
+        if not neighbors:
+            return neighbors
+        if self.topk_neighbors is None or len(neighbors) <= self.topk_neighbors:
+            return neighbors
+        valid_nodes = []
+        scores = []
+        query_vec = query_embedding[0]
+        for neighbour in neighbors:
+            idx = self.node_index.get(neighbour)
+            if idx is None:
+                continue
+            # similarity via dot product
+            score = float(self.node_embeddings[idx] @ query_vec.T)
+            valid_nodes.append(neighbour)
+            scores.append(score)
+        if not valid_nodes:
+            return []
+        top_indices = np.argsort(scores)[-self.topk_neighbors:][::-1]
+        return [valid_nodes[i] for i in top_indices]
     
     def prune(self, query, P, topN=3):
         rated_paths = []
