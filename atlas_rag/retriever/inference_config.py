@@ -29,8 +29,8 @@ class InferenceConfig:
     temperature_reasoning:float = 0.0
     num_sents_for_reasoning: int = 10
     remove_unnecessary_rel: bool = True
-    topk_neighbors: int = 20
-    ignored_relations: tuple = ("mention in",)
+    topk_neighbors: int = 30
+    ignored_relations: tuple = ("mention in")
     ignored_node_types: tuple = ("passage",)
 
     # subgraph retriever config

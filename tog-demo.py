@@ -190,14 +190,14 @@ def answer_with_llm(llm: LLMGenerator, question: str, triples: List[str]) -> str
                        "これらの情報のみを根拠に、詳細に回答してください。",
         },
     ]
-    return llm.generate_response(messages, max_new_tokens=512, temperature=0.2)
+    return llm.generate_response(messages, max_new_tokens=4096, temperature=0.0)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run TOG retrieval on a question.")
     parser.add_argument(
         "--question",
-        default="日本に流通してる海産物は？",
+        default="「『野生のプロ』というタグが付けられる動画と、ニコニコ技術部における『才能の無駄遣い』の共通する文化的背景は何か？」",
         help="問い合わせる質問（日本語推奨）",
     )
     parser.add_argument(
@@ -263,11 +263,11 @@ def main() -> None:
         llm_generator=llm,
         sentence_encoder=embedder,
         data={"KG": graph, "node_embeddings": node_embeddings, "edge_embeddings": edge_embeddings},
-        inference_config=InferenceConfig(Dmax=5, topk=5),
+        inference_config=InferenceConfig(Dmax=10, topk=10),
     )
 
     print(f"❓ 質問: {args.question}")
-    triples, _ = retriever.retrieve(args.question, topN=5)
+    triples, _ = retriever.retrieve(args.question, topN=10)
     print("📚 取得したトリプル:")
     for triple in triples:
         print(f"  - {triple}")
