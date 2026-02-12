@@ -263,14 +263,25 @@ def main() -> None:
         llm_generator=llm,
         sentence_encoder=embedder,
         data={"KG": graph, "node_embeddings": node_embeddings, "edge_embeddings": edge_embeddings},
-        inference_config=InferenceConfig(Dmax=5, topk=3),
+        inference_config=InferenceConfig(Dmax=5, topk=20),
     )
 
     print(f"❓ 質問: {args.question}")
-    triples, _ = retriever.retrieve(args.question, topN=3)
+    triples, _ = retriever.retrieve(args.question, topN=20)
     print("📚 取得したトリプル:")
     for triple in triples:
         print(f"  - {triple}")
+
+    if getattr(retriever, "path_history", None):
+        print("\n🛤️ 探索パス (depthごとのトップ候補):")
+        for snapshot in retriever.path_history:
+            depth = snapshot.get("depth")
+            paths = snapshot.get("paths", [])
+            print(f"  depth {depth} | top {len(paths)}")
+            for idx, info in enumerate(paths, 1):
+                hops = info.get("hops")
+                path_str = info.get("path")
+                print(f"    {idx:>2}. hops={hops}: {path_str}")
 
     answer = answer_with_llm(llm, args.question, triples)
     print("\n💡 回答:")

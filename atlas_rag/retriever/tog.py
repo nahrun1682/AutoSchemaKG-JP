@@ -29,6 +29,10 @@ class TogRetriever(BaseEdgeRetriever):
         self.ignored_relations = set(ignored_relations) if ignored_relations else set()
         ignored_node_types = getattr(self.inference_config, "ignored_node_types", ("passage",))
         self.ignored_node_types = set(ignored_node_types) if ignored_node_types else set()
+        # visited sets are per-retrieve; initialized in retrieve()
+        self.visited_nodes = set()
+        self.visited_edges = set()
+        self.path_history = []
 
     def ner(self, text):
         messages = [
@@ -97,12 +101,17 @@ class TogRetriever(BaseEdgeRetriever):
         D = 0
 
         query_embedding = self.sentence_encoder.encode([query])
+        # reset visited sets for this retrieval run
+        self.visited_nodes = set(initial_nodes)
+        self.visited_edges = set()
+        self.path_history = []
 
         while D <= Dmax:
             P = self.search(query, P, query_embedding)
             print(f"[TOG] after search depth {D}: {len(P)} paths")
             P = self.prune(query, P, topN)
             print(f"[TOG] after prune depth {D}: {len(P)} paths")
+            self._record_paths(P, depth=D)
             
             if self.reasoning(query, P):
                 generated_text = self.generate(query, P)
@@ -151,11 +160,21 @@ class TogRetriever(BaseEdgeRetriever):
                 continue
             for neighbour in sucessors:
                 relation = self.KG.edges[(tail_entity, neighbour)]["relation"]
+                edge_key = (tail_entity, relation, neighbour)
+                if neighbour in self.visited_nodes or edge_key in self.visited_edges:
+                    continue
+                self.visited_nodes.add(neighbour)
+                self.visited_edges.add(edge_key)
                 new_path = path + [relation, neighbour]
                 new_paths.append(new_path)
             
             for neighbour in predecessors:
                 relation = self.KG.edges[(neighbour, tail_entity)]["relation"]
+                edge_key = (neighbour, relation, tail_entity)
+                if neighbour in self.visited_nodes or edge_key in self.visited_edges:
+                    continue
+                self.visited_nodes.add(neighbour)
+                self.visited_edges.add(edge_key)
                 new_path = path + [relation, neighbour]
                 new_paths.append(new_path)
         
@@ -192,6 +211,17 @@ class TogRetriever(BaseEdgeRetriever):
         return [valid_nodes[i] for i in top_indices]
     
     def prune(self, query, P, topN=3):
+        # drop duplicate paths before asking LLM to rate
+        uniq_paths = []
+        seen_paths = set()
+        for path in P:
+            key = tuple(path)
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            uniq_paths.append(path)
+        P = uniq_paths
+
         rated_paths = []
         batch_messages = []
         path_strings = []
@@ -270,8 +300,29 @@ class TogRetriever(BaseEdgeRetriever):
             for i in range(0, len(path)-2, 2):
                 # triples.append((path[i], path[i+1], path[i+2]))
                 triples.append((self.KG.nodes[path[i]]["id"], path[i+1], self.KG.nodes[path[i+2]]["id"]))
-        
+        # remove duplicate triples to keep the output concise
+        triples = list(dict.fromkeys(triples))
+
         triples_string = [f"({triple[0]}, {triple[1]}, {triple[2]})" for triple in triples]
         
         # response = self.llm_generator.generate_with_context_kg(query, triples_string)
         return triples_string, ["N/A" for _ in range(len(triples_string))]
+
+    def _record_paths(self, paths, depth):
+        """Store human-readable paths for later inspection by the caller."""
+        formatted_paths = []
+        for path in paths:
+            path_str = self._path_to_string(path)
+            hops = len(path) // 2
+            formatted_paths.append({"hops": hops, "path": path_str})
+        self.path_history.append({"depth": depth, "paths": formatted_paths})
+
+    def _path_to_string(self, path):
+        parts = []
+        for idx, node_or_rel in enumerate(path):
+            if idx % 2 == 0:
+                node_id = self.KG.nodes[node_or_rel].get("id", node_or_rel)
+                parts.append(node_id)
+            else:
+                parts.append(f"-[{node_or_rel}]->")
+        return " ".join(parts)
