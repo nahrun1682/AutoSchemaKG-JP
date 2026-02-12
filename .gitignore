@@ -24,3 +24,6 @@ test_llm.py
 import/
 example_data/
 docs/
+import/*
+!import/niconico_2024_month/
+!import/niconico_2024_month/**
